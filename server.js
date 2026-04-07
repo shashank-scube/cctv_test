@@ -35,7 +35,7 @@ app.post('/convertToHls', (req, res) => {
 
     result.push({
       placeName: cam.placeName,
-      hlsUrl: `http://localhost:8080/hls/${safeName}.m3u8`
+      hlsUrl: `https://cctvtest-production.up.railway.app/hls/${safeName}.m3u8`
     });
   });
 
