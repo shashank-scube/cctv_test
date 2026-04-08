@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -9,10 +9,20 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+const PORT = process.env.PORT || 8080;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
+// 📁 HLS Folder
 const HLS_FOLDER = path.join(process.cwd(), 'hls');
 if (!fs.existsSync(HLS_FOLDER)) fs.mkdirSync(HLS_FOLDER);
 
-app.post('/convertToHls', (req, res) => {
+// 🔥 Track running streams
+const runningStreams = new Map();
+
+/**
+ * ▶ START STREAM
+ */
+app.post('/start', (req, res) => {
   const cameras = req.body;
   const result = [];
 
@@ -20,28 +30,81 @@ app.post('/convertToHls', (req, res) => {
     const safeName = cam.placeName.replace(/\s+/g, '_');
     const outputPath = path.join(HLS_FOLDER, `${safeName}.m3u8`);
 
-    // ✅ FIXED FFmpeg command
-    exec(`ffmpeg -i "${cam.rtspUrl}" \
-    -c:v libx264 -preset veryfast -tune zerolatency \
-    -c:a aac \
-    -f hls \
-    -hls_time 2 \
-    -hls_list_size 5 \
-    -hls_flags delete_segments \
-    "${outputPath}"`, 
-    (err) => {
-      if (err) console.error(`FFmpeg error for ${cam.placeName}:`, err);
+    // 🚫 Avoid duplicate streams
+    if (runningStreams.has(safeName)) {
+      result.push({
+        placeName: cam.placeName,
+        hlsUrl: `${BASE_URL}/hls/${safeName}.m3u8`,
+        status: 'already_running'
+      });
+      return;
+    }
+
+    const ffmpeg = spawn('ffmpeg', [
+      '-rtsp_transport', 'tcp',
+      '-i', cam.rtspUrl,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-tune', 'zerolatency',
+      '-c:a', 'aac',
+      '-f', 'hls',
+      '-hls_time', '2',
+      '-hls_list_size', '5',
+      '-hls_flags', 'delete_segments',
+      outputPath
+    ]);
+
+    ffmpeg.stderr.on('data', (data) => {
+      console.log(`${safeName}: ${data}`);
     });
+
+    ffmpeg.on('close', () => {
+      console.log(`${safeName} stopped`);
+      runningStreams.delete(safeName);
+    });
+
+    runningStreams.set(safeName, ffmpeg);
 
     result.push({
       placeName: cam.placeName,
-      hlsUrl: `https://cctvtest-production.up.railway.app/hls/${safeName}.m3u8`
+      hlsUrl: `${BASE_URL}/hls/${safeName}.m3u8`,
+      status: 'started'
     });
   });
 
   res.json(result);
 });
 
+/**
+ * 🛑 STOP STREAM
+ */
+app.post('/stop', (req, res) => {
+  const { placeName } = req.body;
+  const safeName = placeName.replace(/\s+/g, '_');
+
+  if (!runningStreams.has(safeName)) {
+    return res.json({ message: 'Stream not running' });
+  }
+
+  const process = runningStreams.get(safeName);
+  process.kill('SIGINT');
+  runningStreams.delete(safeName);
+
+  res.json({ message: 'Stream stopped' });
+});
+
+/**
+ * 📊 LIST STREAMS
+ */
+app.get('/streams', (req, res) => {
+  res.json(Array.from(runningStreams.keys()));
+});
+
+/**
+ * 📺 SERVE HLS FILES
+ */
 app.use('/hls', express.static(HLS_FOLDER));
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
