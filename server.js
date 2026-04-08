@@ -10,7 +10,9 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 8080;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+const BASE_URL = process.env.RAILWAY_STATIC_URL
+  ? `https://${process.env.RAILWAY_STATIC_URL}`
+  : `http://localhost:${PORT}`;
 
 // 📁 HLS Folder
 const HLS_FOLDER = path.join(process.cwd(), 'hls');
@@ -57,6 +59,9 @@ app.post('/start', (req, res) => {
     ffmpeg.stderr.on('data', (data) => {
       console.log(`${safeName}: ${data}`);
     });
+    ffmpeg.on('error', (err) => {
+  console.error(`FFmpeg failed for ${safeName}`, err);
+});
 
     ffmpeg.on('close', () => {
       console.log(`${safeName} stopped`);
@@ -99,7 +104,9 @@ app.post('/stop', (req, res) => {
 app.get('/streams', (req, res) => {
   res.json(Array.from(runningStreams.keys()));
 });
-
+app.get('/', (req, res) => {
+  res.send('CCTV HLS Server Running 🚀');
+});
 /**
  * 📺 SERVE HLS FILES
  */
